@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📈 股票行情看板</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0a0a0f; color: #e0e0e0; min-height: 100vh; }
+.hero { background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 32px 20px; text-align: center; border-bottom: 1px solid #1e3a5f; }
+.hero h1 { font-size: 1.8rem; margin-bottom: 8px; }
+.hero p { color: #6b8dad; font-size: 0.9rem; }
+.main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+.search-bar { display: flex; gap: 12px; margin-bottom: 24px; }
+.search-bar input { flex: 1; background: #16161f; border: 1px solid #2a2a3e; border-radius: 10px; padding: 14px 18px; color: #e0e0e0; font-size: 1rem; outline: none; }
+.search-bar input:focus { border-color: #667eea; }
+.search-bar button { background: linear-gradient(135deg, #667eea, #764ba2); border: none; border-radius: 10px; padding: 14px 28px; color: white; font-size: 1rem; font-weight: 600; cursor: pointer; }
+.watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 32px; }
+.card { background: #16161f; border: 1px solid #2a2a3e; border-radius: 14px; padding: 20px; transition: transform 0.2s, border-color 0.2s; }
+.card:hover { transform: translateY(-2px); border-color: #667eea; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.card-symbol { font-size: 1.1rem; font-weight: 700; color: #a5b4fc; }
+.card-name { font-size: 0.8rem; color: #6b8dad; }
+.card-price { font-size: 1.8rem; font-weight: 700; margin-bottom: 8px; }
+.card-change { font-size: 0.95rem; font-weight: 600; }
+.up { color: #f87171; }
+.down { color: #4ade80; }
+.card-meta { display: flex; gap: 16px; margin-top: 12px; font-size: 0.8rem; color: #6b8dad; }
+.empty { text-align: center; padding: 60px 20px; color: #555; }
+.empty-icon { font-size: 3rem; margin-bottom: 16px; }
+.remove-btn { background: #2a1a1a; border: 1px solid #4a2020; color: #f87171; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 0.75rem; }
+</style>
+</head>
+<body>
+<div class="hero">
+  <h1>📈 股票行情看板</h1>
+  <p>实时行情 · 自选股管理 · 持仓追踪</p>
+</div>
+<div class="main">
+  <div class="search-bar">
+    <input id="symbolInput" placeholder="输入股票代码，如 AAPL、0700.HK、600519.SS" onkeypress="if(event.key==='Enter')addStock()">
+    <button onclick="addStock()">添加自选</button>
+  </div>
+  <div class="watchlist" id="watchlist">
+    <div class="empty">
+      <div class="empty-icon">📊</div>
+      <p>暂无自选股<br><small style="color:#444">输入代码添加股票</small></p>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'stock_watchlist';
+
+// Load watchlist from localStorage
+let watchlist = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+if (watchlist.length === 0) {
+  // Add some default stocks
+  watchlist = ['AAPL', 'GOOGL', '0700.HK', '600519.SS'];
+  saveWatchlist();
+}
+
+function saveWatchlist() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlist));
+}
+
+function formatNumber(n, decimals = 2) {
+  if (n === null || n === undefined || isNaN(n)) return '--';
+  return Number(n).toFixed(decimals);
+}
+
+function formatVolume(v) {
+  if (!v) return '--';
+  if (v >= 1e9) return (v/1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1) + 'K';
+  return v;
+}
+
+function addStock() {
+  const input = document.getElementById('symbolInput');
+  const sym = input.value.trim().toUpperCase();
+  if (!sym) return;
+  if (watchlist.includes(sym)) { input.value = ''; return; }
+  watchlist.push(sym);
+  saveWatchlist();
+  input.value = '';
+  renderWatchlist();
+}
+
+function removeStock(sym) {
+  watchlist = watchlist.filter(s => s !== sym);
+  saveWatchlist();
+  renderWatchlist();
+}
+
+function renderWatchlist() {
+  const container = document.getElementById('watchlist');
+  if (watchlist.length === 0) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><p>暂无自选股</p></div>';
+    return;
+  }
+  
+  // Fetch all stocks in parallel
+  Promise.all(watchlist.map(sym => 
+    fetch(`/api/quote/${encodeURIComponent(sym)}`)
+      .then(r => r.json())
+      .catch(() => ({ symbol: sym, error: true }))
+  )).then(results => {
+    container.innerHTML = results.map(d => {
+      if (d.error) {
+        return `<div class="card"><div class="card-symbol">${d.symbol}</div><div class="card-price" style="color:#f87171">获取失败</div></div>`;
+      }
+      const chg = d.change || 0;
+      const chgPct = d.changePercent || 0;
+      const cls = chg >= 0 ? 'up' : 'down';
+      const sign = chg >= 0 ? '+' : '';
+      return `
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-symbol">${d.symbol}</div>
+              <div class="card-name">${d.name || d.symbol}</div>
+            </div>
+            <button class="remove-btn" onclick="removeStock('${d.symbol}')">删除</button>
+          </div>
+          <div class="card-price">$${formatNumber(d.price)}</div>
+          <div class="card-change ${cls}">${sign}${formatNumber(chg)} (${sign}${formatNumber(chgPct)}%)</div>
+          <div class="card-meta">
+            <span>高: ${formatNumber(d.high)}</span>
+            <span>低: ${formatNumber(d.low)}</span>
+            <span>量: ${formatVolume(d.volume)}</span>
+          </div>
+        </div>`;
+    }).join('');
+  });
+}
+
+// Initial render
+renderWatchlist();
+
+// Refresh every 30 seconds
+setInterval(renderWatchlist, 30000);
+</script>
+</body>
+</html>
